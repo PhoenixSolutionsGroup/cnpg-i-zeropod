@@ -17,12 +17,14 @@ CLUSTER_NAME="${1:-zeropod-bench}"
 NAMESPACE="${2:-default}"
 ITERATIONS="${3:-5}"
 POD_NAME="${CLUSTER_NAME}-1"
+POOLER_NAME="${CLUSTER_NAME}-pooler"
 CLIENT_POD="psql-bench-client"
 SCALEDOWN_SECONDS=10
 
 cleanup() {
   info "Cleaning up..."
   $KUBECTL delete pod "$CLIENT_POD" -n "$NAMESPACE" --ignore-not-found --wait=false 2>/dev/null || true
+  $KUBECTL delete pooler "$POOLER_NAME" -n "$NAMESPACE" --ignore-not-found --wait=false 2>/dev/null || true
   $KUBECTL delete cluster "$CLUSTER_NAME" -n "$NAMESPACE" --ignore-not-found --wait=false 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -142,12 +144,48 @@ done
 ok "Cluster healthy"
 
 # ---------------------------------------------------------------------------
+# 3b. Create Pooler
+# ---------------------------------------------------------------------------
+info "Creating CNPG Pooler: ${POOLER_NAME}"
+$KUBECTL apply -f - <<EOF
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: ${POOLER_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  cluster:
+    name: ${CLUSTER_NAME}
+  instances: 1
+  type: rw
+  pgbouncer:
+    poolMode: session
+    parameters:
+      max_client_conn: "100"
+      default_pool_size: "10"
+EOF
+
+info "Waiting for pooler pod to be ready..."
+end=$((SECONDS + 120))
+POOLER_POD=""
+while [ $SECONDS -lt $end ]; do
+  POOLER_POD=$($KUBECTL get pods -n "$NAMESPACE" -l cnpg.io/poolerName="$POOLER_NAME" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  if [ -n "$POOLER_POD" ]; then
+    $KUBECTL wait --for=condition=Ready "pod/$POOLER_POD" -n "$NAMESPACE" --timeout=60s 2>/dev/null && break
+  fi
+  sleep 3
+done
+[ -n "$POOLER_POD" ] && ok "Pooler pod ready: $POOLER_POD" || { fail "Pooler pod not ready"; exit 1; }
+
+# ---------------------------------------------------------------------------
 # 4. Get connection details
 # ---------------------------------------------------------------------------
 POD_IP=$($KUBECTL get pod "$POD_NAME" -n "$NAMESPACE" -o jsonpath='{.status.podIP}')
 PG_PASSWORD=$($KUBECTL get secret "${CLUSTER_NAME}-superuser" -n "$NAMESPACE" \
   -o jsonpath='{.data.password}' | base64 -d)
 CONNSTR="host=${POD_IP} dbname=postgres user=postgres password=${PG_PASSWORD} sslmode=require"
+POOLER_CONNSTR="host=${POOLER_NAME} dbname=postgres user=postgres password=${PG_PASSWORD} sslmode=disable"
 
 # Insert test data
 run_psql "$CONNSTR" -c "
@@ -202,7 +240,36 @@ for i in $(seq 1 "$ITERATIONS"); do
 done
 
 # ---------------------------------------------------------------------------
-# 7. Zeropod restore durations from logs
+# 7. Pooler + PG cold benchmark
+# ---------------------------------------------------------------------------
+info ""
+info "=== POOLER + PG COLD QUERIES (from SCALED_DOWN, via PgBouncer) ==="
+pooler_cold_times=()
+
+for i in $(seq 1 "$ITERATIONS"); do
+  # Ensure PG is running first
+  run_psql "$CONNSTR" -t -A -c "SELECT 1;" >/dev/null 2>&1 || true
+  wait_for_status "RUNNING" 30 || true
+
+  # Wait for PG scale-down
+  info "  Waiting for PG scaledown..."
+  if ! wait_for_status "SCALED_DOWN" 120; then
+    warn "  Run $i: PG did not scale down, skipping"
+    continue
+  fi
+
+  # Measure cold start through the pooler (PgBouncer → PG restore chain)
+  ms=$(time_psql_with_retry "$POOLER_CONNSTR")
+  if [ "$ms" -ge 0 ]; then
+    pooler_cold_times+=("$ms")
+    printf "  Run %d: %4d ms\n" "$i" "$ms"
+  else
+    warn "  Run $i: FAILED (query never succeeded)"
+  fi
+done
+
+# ---------------------------------------------------------------------------
+# 8. Zeropod restore durations from logs
 # ---------------------------------------------------------------------------
 info ""
 info "=== ZEROPOD RESTORE DURATIONS (from manager logs) ==="
@@ -217,7 +284,7 @@ $KUBECTL logs ds/zeropod-node -n zeropod-system --since=10m 2>/dev/null \
   done
 
 # ---------------------------------------------------------------------------
-# 8. Summary
+# 9. Summary
 # ---------------------------------------------------------------------------
 print_stats() {
   local label="$1"; shift
@@ -244,5 +311,6 @@ echo "======================================"
 echo "  Benchmark Results"
 echo "======================================"
 print_stats "Warm (PG running)" "${warm_times[@]}"
-print_stats "Cold (from SCALED_DOWN)" "${cold_times[@]}"
+print_stats "Cold: PG direct (from SCALED_DOWN)" "${cold_times[@]}"
+print_stats "Cold: Pooler + PG (via PgBouncer)" "${pooler_cold_times[@]}"
 echo ""

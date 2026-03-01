@@ -99,6 +99,12 @@ func (impl Implementation) LifecycleHook(
 
 	mutatedPod := pod.DeepCopy()
 
+	// Determine the target container based on pod role.
+	containerName := "postgres"
+	if mutatedPod.Labels["cnpg.io/podRole"] == "pooler" {
+		containerName = "pgbouncer"
+	}
+
 	// Set the RuntimeClass.
 	runtimeClass := zeropodRuntimeClass
 	mutatedPod.Spec.RuntimeClassName = &runtimeClass
@@ -107,32 +113,27 @@ func (impl Implementation) LifecycleHook(
 	if mutatedPod.Annotations == nil {
 		mutatedPod.Annotations = make(map[string]string)
 	}
-	mutatedPod.Annotations[zeropodPortsMap] = "postgres=5432"
-	mutatedPod.Annotations[zeropodContainerNames] = "postgres"
+	mutatedPod.Annotations[zeropodPortsMap] = fmt.Sprintf("%s=5432", containerName)
+	mutatedPod.Annotations[zeropodContainerNames] = containerName
 	mutatedPod.Annotations[zeropodScaledownDuration] = scaledownDuration
 
-	// Find the postgres container and patch it for CRIU compatibility.
-	pgIdx := -1
+	// Find the target container and apply CRIU compatibility patches.
+	targetIdx := -1
 	for i := range mutatedPod.Spec.Containers {
-		if mutatedPod.Spec.Containers[i].Name != "postgres" {
+		if mutatedPod.Spec.Containers[i].Name != containerName {
 			continue
 		}
-		pgIdx = i
-		c := &mutatedPod.Spec.Containers[i]
+		targetIdx = i
 
-		// CRIU compatibility flags for the Go runtime:
-		//   multipathtcp=0 — Go 1.21+ enables MPTCP (proto 262) by default,
-		//     which CRIU cannot checkpoint ("Unsupported proto 262").
-		//   pidfd=0 — Go 1.23+ uses pidfds for process tracking. CRIU
-		//     restores pidfds but the Go runtime's internal state gets
-		//     corrupted, causing cmd.Wait() to return prematurely. This
-		//     makes the CNPG instance manager think PostgreSQL exited and
-		//     restart it from scratch. Disabling pidfds forces waitpid(),
-		//     which works on PIDs (preserved by CRIU).
-		c.Env = append(c.Env, corev1.EnvVar{
-			Name:  "GODEBUG",
-			Value: "multipathtcp=0,pidfd=0",
-		})
+		// GODEBUG flags only needed for the Go-based CNPG instance manager,
+		// not for PgBouncer (C process).
+		if containerName == "postgres" {
+			c := &mutatedPod.Spec.Containers[i]
+			c.Env = append(c.Env, corev1.EnvVar{
+				Name:  "GODEBUG",
+				Value: "multipathtcp=0,pidfd=0",
+			})
+		}
 
 		break
 	}
@@ -149,8 +150,7 @@ func (impl Implementation) LifecycleHook(
 	// Any probe type is incompatible with zeropod scale-to-zero:
 	//   - TCP on 5432: resets the eBPF idle timer, prevents scale-down
 	//   - HTTPS on 8000: fails while checkpointed, kills the pod
-	// CNPG's operator handles health monitoring independently.
-	if pgIdx >= 0 {
+	if targetIdx >= 0 {
 		var ops []json.RawMessage
 		if err := json.Unmarshal(patch, &ops); err != nil {
 			return nil, fmt.Errorf("parsing patch ops: %w", err)
@@ -158,7 +158,7 @@ func (impl Implementation) LifecycleHook(
 
 		removeOp, _ := json.Marshal(map[string]interface{}{
 			"op":   "remove",
-			"path": fmt.Sprintf("/spec/containers/%d/livenessProbe", pgIdx),
+			"path": fmt.Sprintf("/spec/containers/%d/livenessProbe", targetIdx),
 		})
 		ops = append(ops, removeOp)
 
@@ -170,6 +170,7 @@ func (impl Implementation) LifecycleHook(
 
 	logger.Info("injecting zeropod runtime",
 		"cluster", cluster.Name,
+		"podRole", containerName,
 		"scaledownDuration", scaledownDuration,
 		"patch", json.RawMessage(patch))
 

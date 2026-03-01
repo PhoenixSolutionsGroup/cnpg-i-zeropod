@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	cnpgv1 "github.com/cloudnative-pg/api/pkg/api/v1"
 	"github.com/cloudnative-pg/machinery/pkg/log"
@@ -16,11 +17,13 @@ import (
 )
 
 const (
-	// Zeropod status label set by the zeropod-manager DaemonSet.
-	labelZeropodStatus = "status.zeropod.ctrox.dev/postgres"
+	// Zeropod status label prefix set by the zeropod-manager DaemonSet.
+	// Full label is status.zeropod.ctrox.dev/<container-name>.
+	labelZeropodStatusPrefix = "status.zeropod.ctrox.dev/"
 
 	// CNPG labels/annotations.
 	labelCNPGCluster         = "cnpg.io/cluster"
+	labelCNPGPodRole         = "cnpg.io/podRole"
 	annotationReconciliation = "cnpg.io/reconciliationLoop"
 
 	// Zeropod annotation used to identify managed pods.
@@ -45,9 +48,12 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		WithEventFilter(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 			labels := obj.GetLabels()
 			_, hasCNPG := labels[labelCNPGCluster]
+			if !hasCNPG {
+				return false
+			}
 			annotations := obj.GetAnnotations()
 			_, hasZeropod := annotations[annotationZeropodPortsMap]
-			return hasCNPG && hasZeropod
+			return hasZeropod
 		})).
 		Complete(r)
 }
@@ -66,7 +72,14 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, nil
 	}
 
-	phase := pod.Labels[labelZeropodStatus]
+	// Find the zeropod status label (status.zeropod.ctrox.dev/<container>).
+	var phase string
+	for k, v := range pod.Labels {
+		if strings.HasPrefix(k, labelZeropodStatusPrefix) {
+			phase = v
+			break
+		}
+	}
 
 	cluster := &cnpgv1.Cluster{}
 	if err := r.Get(ctx, types.NamespacedName{
@@ -76,11 +89,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// Only manage cluster reconciliation/backups for instance pods.
+	isInstance := pod.Labels[labelCNPGPodRole] != "pooler"
+
 	switch phase {
 	case statusScaledDown:
-		return r.onScaledDown(ctx, logger, cluster)
+		if isInstance {
+			return r.onScaledDown(ctx, logger, cluster)
+		}
 	case statusRunning:
-		return r.onRunning(ctx, logger, cluster)
+		if isInstance {
+			return r.onRunning(ctx, logger, cluster)
+		}
 	}
 
 	return ctrl.Result{}, nil

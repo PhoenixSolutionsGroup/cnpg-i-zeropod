@@ -29,10 +29,24 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - controller
+            - --webhook-cert-dir=/webhook-certs
+            - --webhook-port={{ .Values.webhook.port }}
+          ports:
+            - name: webhook
+              containerPort: {{ .Values.webhook.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /webhook-certs
+              readOnly: true
           {{- with .Values.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: {{ .Values.webhook.certSecretName }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
