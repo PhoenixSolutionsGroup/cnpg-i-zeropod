@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cnpg-i-zeropod.fullname" . }}
+  labels:
+    {{- include "cnpg-i-zeropod.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cnpg-i-zeropod.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cnpg-i-zeropod.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "cnpg-i-zeropod.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: cnpg-i-zeropod
+          image: "{{ .Values.image.repository }}:{{ include "cnpg-i-zeropod.imageTag" . }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - plugin
+            - --server-cert=/server/tls.crt
+            - --server-key=/server/tls.key
+            - --client-cert=/client/tls.crt
+            - --server-address=:{{ .Values.port }}
+          ports:
+            - name: grpc
+              containerPort: {{ .Values.port }}
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          volumeMounts:
+            - name: server-tls
+              mountPath: /server
+              readOnly: true
+            - name: client-tls
+              mountPath: /client
+              readOnly: true
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: server-tls
+          secret:
+            secretName: {{ .Values.tls.serverSecretName }}
+        - name: client-tls
+          secret:
+            secretName: {{ .Values.tls.clientSecretName }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

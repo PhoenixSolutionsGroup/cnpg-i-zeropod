@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "cnpg-i-zeropod.fullname" . }}-server
+  labels:
+    {{- include "cnpg-i-zeropod.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.tls.serverSecretName }}
+  commonName: {{ include "cnpg-i-zeropod.fullname" . }}
+  dnsNames:
+    - {{ include "cnpg-i-zeropod.fullname" . }}
+    - {{ include "cnpg-i-zeropod.fullname" . }}.{{ .Release.Namespace }}
+    - {{ include "cnpg-i-zeropod.fullname" . }}.{{ .Release.Namespace }}.svc
+    - {{ include "cnpg-i-zeropod.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  duration: {{ .Values.tls.duration }}
+  renewBefore: {{ .Values.tls.renewBefore }}
+  isCA: false
+  usages:
+    - server auth
+  issuerRef:
+    name: {{ .Values.tls.issuerName }}
+    kind: Issuer
+    group: cert-manager.io

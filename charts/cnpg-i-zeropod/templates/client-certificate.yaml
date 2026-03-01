@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "cnpg-i-zeropod.fullname" . }}-client
+  labels:
+    {{- include "cnpg-i-zeropod.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.tls.clientSecretName }}
+  commonName: {{ include "cnpg-i-zeropod.fullname" . }}-client
+  duration: {{ .Values.tls.duration }}
+  renewBefore: {{ .Values.tls.renewBefore }}
+  isCA: false
+  usages:
+    - client auth
+  issuerRef:
+    name: {{ .Values.tls.issuerName }}
+    kind: Issuer
+    group: cert-manager.io

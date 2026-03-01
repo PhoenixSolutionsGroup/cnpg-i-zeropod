@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cnpg-i-zeropod.fullname" . }}
+  labels:
+    {{- include "cnpg-i-zeropod.labels" . | nindent 4 }}
+    cnpg.io/pluginName: {{ .Values.pluginName }}
+  annotations:
+    cnpg.io/pluginPort: {{ .Values.port | quote }}
+    cnpg.io/pluginClientSecret: {{ .Values.tls.clientSecretName }}
+    cnpg.io/pluginServerSecret: {{ .Values.tls.serverSecretName }}
+spec:
+  ports:
+    - name: grpc
+      port: {{ .Values.port }}
+      protocol: TCP
+      targetPort: {{ .Values.port }}
+  selector:
+    {{- include "cnpg-i-zeropod.selectorLabels" . | nindent 4 }}

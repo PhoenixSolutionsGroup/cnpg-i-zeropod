@@ -1,0 +1,8 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.tls.issuerName }}
+  labels:
+    {{- include "cnpg-i-zeropod.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}

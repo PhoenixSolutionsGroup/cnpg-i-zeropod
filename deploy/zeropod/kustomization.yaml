@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/ctrox/zeropod/config/k3s
+components:
+  - https://github.com/ctrox/zeropod/config/tracker-ignore-localhost
+  - https://github.com/ctrox/zeropod/config/status-labels
+images:
+  - name: ghcr.io/ctrox/zeropod-installer
+    newName: ghcr.io/phoenixsolutionsgroup/zeropod-installer
+    newTag: dev
+  - name: ghcr.io/ctrox/zeropod-manager
+    newName: ghcr.io/phoenixsolutionsgroup/zeropod-manager
+    newTag: dev
+patches:
+  # Upstream sets -probe-binary-name=k3s but the k3s process comm is
+  # "k3s-server". The eBPF tracker uses bpf_strncmp on the comm field
+  # to identify kubelet traffic and exclude it from the idle timer.
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: -probe-binary-name=k3s-server
+    target:
+      kind: DaemonSet

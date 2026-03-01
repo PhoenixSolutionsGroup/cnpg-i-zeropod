@@ -1,0 +1,30 @@
+# Plugin name as registered with CNPG-I.
+# Must match pkg/metadata/metadata.go PluginName and the Cluster CR .spec.plugins[].name.
+pluginName: cnpg-i-zeropod.io
+
+replicaCount: 1
+
+image:
+  repository: cnpg-i-zeropod
+  # Defaults to appVersion from Chart.yaml
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# gRPC listen port (standard for CNPG-I plugins)
+port: 9090
+
+serviceAccount:
+  create: true
+  # Override the generated name
+  name: ""
+
+tls:
+  issuerName: cnpg-i-zeropod-selfsigned-issuer
+  serverSecretName: cnpg-i-zeropod-server-tls
+  clientSecretName: cnpg-i-zeropod-client-tls
+  duration: 2160h   # 90 days
+  renewBefore: 360h  # 15 days
+
+resources: {}
+nodeSelector: {}
+tolerations: []
