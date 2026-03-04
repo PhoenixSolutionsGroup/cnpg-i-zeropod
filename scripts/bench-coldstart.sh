@@ -19,7 +19,9 @@ ITERATIONS="${3:-5}"
 POD_NAME="${CLUSTER_NAME}-1"
 POOLER_NAME="${CLUSTER_NAME}-pooler"
 CLIENT_POD="psql-bench-client"
-SCALEDOWN_SECONDS=10
+SCALEDOWN_SECONDS=15
+STORAGE_SIZE="${STORAGE_SIZE:-1Gi}"
+STORAGE_CLASS="${STORAGE_CLASS:-}"
 
 cleanup() {
   info "Cleaning up..."
@@ -126,7 +128,8 @@ spec:
     parameters:
       shared_memory_type: mmap
   storage:
-    size: 1Gi
+    size: ${STORAGE_SIZE}
+$([ -n "$STORAGE_CLASS" ] && echo "    storageClass: ${STORAGE_CLASS}")
 EOF
 
 # ---------------------------------------------------------------------------
