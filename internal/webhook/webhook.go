@@ -30,6 +30,7 @@ const (
 	zeropodScaledownDuration = "zeropod.ctrox.dev/scaledown-duration"
 	zeropodCPURequests       = "zeropod.ctrox.dev/cpu-requests"
 	zeropodMemoryRequests    = "zeropod.ctrox.dev/memory-requests"
+	zeropodWakePeers         = "zeropod.ctrox.dev/wake-peers"
 
 	zeropodRuntimeClass = "zeropod"
 )
@@ -86,6 +87,19 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 		}
 	}
 
+	// Look up the -rw service ClusterIP for wake-peers. The zeropod shim runs
+	// on the host and cannot resolve cluster DNS names, so we inject the IP.
+	var wakePeersValue string
+	rwSvc := &corev1.Service{}
+	if err := h.Client.Get(ctx, types.NamespacedName{
+		Name:      clusterName + "-rw",
+		Namespace: namespace,
+	}, rwSvc); err == nil && rwSvc.Spec.ClusterIP != "" {
+		wakePeersValue = fmt.Sprintf("%s:5432", rwSvc.Spec.ClusterIP)
+	} else {
+		logger.Info("could not resolve -rw service ClusterIP for wake-peers", "error", err)
+	}
+
 	// Build JSON patch.
 	var patches []map[string]interface{}
 
@@ -133,6 +147,15 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 			"value": `{"pgbouncer":"0"}`,
 		},
 	)
+
+	// Wake the PG instance concurrently when PgBouncer is restored.
+	if wakePeersValue != "" {
+		patches = append(patches, map[string]interface{}{
+			"op":    "add",
+			"path":  "/metadata/annotations/" + escapeJSONPointer(zeropodWakePeers),
+			"value": wakePeersValue,
+		})
+	}
 
 	// Remove liveness probe on the pgbouncer container.
 	for i, c := range pod.Spec.Containers {
