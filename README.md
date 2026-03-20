@@ -59,7 +59,7 @@ spec:
     size: 1Gi
 ```
 
-After 300s of inactivity the pod checkpoints via CRIU. Any TCP connection to port 5432 triggers a restore in ~530ms.
+After 300s of inactivity the pod checkpoints via CRIU. Any TCP connection to port 5432 triggers a restore — under 200ms on dedicated CPU, ~450ms on shared CPU.
 
 ### Add a Pooler (PgBouncer)
 
@@ -84,7 +84,7 @@ spec:
 
 The webhook automatically injects zeropod into Pooler pods — no extra annotations needed. PgBouncer will checkpoint after the same inactivity period configured on the Cluster.
 
-Clients connect through the Pooler service (`my-db-pooler:5432`). When both PgBouncer and PostgreSQL are checkpointed, the first connection restores both (~550ms total — PgBouncer restore adds only ~16ms overhead).
+Clients connect through the Pooler service (`my-db-pooler:5432`). When both PgBouncer and PostgreSQL are checkpointed, the first connection restores both concurrently — under 200ms on dedicated CPU, ~480ms on shared CPU.
 
 ### Configuration
 

@@ -19,9 +19,10 @@ ITERATIONS="${3:-5}"
 POD_NAME="${CLUSTER_NAME}-1"
 POOLER_NAME="${CLUSTER_NAME}-pooler"
 CLIENT_POD="psql-bench-client"
-SCALEDOWN_SECONDS=15
+SCALEDOWN_SECONDS="${SCALEDOWN_SECONDS:-15}"
 STORAGE_SIZE="${STORAGE_SIZE:-1Gi}"
 STORAGE_CLASS="${STORAGE_CLASS:-}"
+NODE_POOL="${NODE_POOL:-}"
 
 cleanup() {
   info "Cleaning up..."
@@ -130,6 +131,12 @@ spec:
   storage:
     size: ${STORAGE_SIZE}
 $([ -n "$STORAGE_CLASS" ] && echo "    storageClass: ${STORAGE_CLASS}")
+$([ -n "$NODE_POOL" ] && cat <<AFFINITY
+  affinity:
+    nodeSelector:
+      vke.vultr.com/node-pool: ${NODE_POOL}
+AFFINITY
+)
 EOF
 
 # ---------------------------------------------------------------------------
@@ -166,6 +173,7 @@ spec:
     parameters:
       max_client_conn: "100"
       default_pool_size: "10"
+      server_login_retry: "0"
 EOF
 
 info "Waiting for pooler pod to be ready..."
