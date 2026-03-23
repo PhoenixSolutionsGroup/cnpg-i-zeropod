@@ -23,8 +23,9 @@ const (
 	labelZeropodStatusPrefix = "status.zeropod.ctrox.dev/"
 
 	// CNPG labels/annotations.
-	labelCNPGCluster = "cnpg.io/cluster"
-	labelCNPGPodRole = "cnpg.io/podRole"
+	labelCNPGCluster    = "cnpg.io/cluster"
+	labelCNPGPodRole    = "cnpg.io/podRole"
+	labelCNPGPoolerName = "cnpg.io/poolerName"
 
 	// cnpg.io/fencedInstances is a JSON array of pod names that CNPG should
 	// treat as "expected unavailable". Fenced instances report
@@ -88,9 +89,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	// Only manage fencing/backups for instance pods (not pooler).
-	isInstance := pod.Labels[labelCNPGPodRole] != "pooler"
-	if !isInstance {
+	// Pooler pods only need their service patched for publishNotReadyAddresses.
+	if pod.Labels[labelCNPGPodRole] == "pooler" {
+		if phase == statusScaledDown {
+			return ctrl.Result{}, r.ensurePoolerPublishNotReadyAddresses(ctx, logger, pod)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -318,6 +321,34 @@ func (r *Reconciler) ensurePublishNotReadyAddresses(ctx context.Context, logger 
 		if err := r.Patch(ctx, svc, patch); err != nil {
 			return fmt.Errorf("patching service %s: %w", svc.Name, err)
 		}
+	}
+	return nil
+}
+
+// ensurePoolerPublishNotReadyAddresses patches the Pooler's service to set
+// publishNotReadyAddresses: true, so checkpointed pgbouncer pods remain in
+// service endpoints and can be woken by incoming TCP connections.
+func (r *Reconciler) ensurePoolerPublishNotReadyAddresses(ctx context.Context, logger log.Logger, pod *corev1.Pod) error {
+	poolerName := pod.Labels[labelCNPGPoolerName]
+	if poolerName == "" {
+		return nil
+	}
+	svc := &corev1.Service{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      poolerName,
+		Namespace: pod.Namespace,
+	}, svc); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if svc.Spec.PublishNotReadyAddresses {
+		return nil
+	}
+	logger.Info("patching pooler service with publishNotReadyAddresses",
+		"service", svc.Name)
+	patch := client.MergeFrom(svc.DeepCopy())
+	svc.Spec.PublishNotReadyAddresses = true
+	if err := r.Patch(ctx, svc, patch); err != nil {
+		return fmt.Errorf("patching pooler service %s: %w", svc.Name, err)
 	}
 	return nil
 }

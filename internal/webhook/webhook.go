@@ -157,13 +157,21 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 		})
 	}
 
-	// Remove liveness probe on the pgbouncer container.
+	// Remove liveness and readiness probes on the pgbouncer container.
+	// The readiness probe (TCP on 5432 every 10s) resets zeropod's eBPF
+	// idle timer, preventing pgbouncer from ever checkpointing.
 	for i, c := range pod.Spec.Containers {
 		if c.Name == "pgbouncer" {
 			if c.LivenessProbe != nil {
 				patches = append(patches, map[string]interface{}{
 					"op":   "remove",
 					"path": fmt.Sprintf("/spec/containers/%d/livenessProbe", i),
+				})
+			}
+			if c.ReadinessProbe != nil {
+				patches = append(patches, map[string]interface{}{
+					"op":   "remove",
+					"path": fmt.Sprintf("/spec/containers/%d/readinessProbe", i),
 				})
 			}
 			break

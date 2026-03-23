@@ -80,6 +80,52 @@ spec:
 
 The plugin injects the zeropod RuntimeClass, annotations, GODEBUG flags, and removes the liveness probe. After 300s of inactivity the pod checkpoints; any TCP connection to port 5432 triggers restore.
 
+## Using with PgBouncer (recommended)
+
+A CNPG Pooler in front of the cluster absorbs the CRIU restore latency so clients never see a failed connection — just a brief wait on cold start.
+
+**Important:** Set `server_login_retry: "0"` — without this, PgBouncer caches backend connection errors for 15s (the default), turning a sub-second cold start into a ~20s wait.
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: my-db
+  annotations:
+    cnpg.io/scale-to-zero-enabled: "true"
+    cnpg.io/scale-to-zero-inactivity-seconds: "300"
+spec:
+  instances: 1
+  enableSuperuserAccess: true
+  plugins:
+    - name: cnpg-i-zeropod.io
+  postgresql:
+    parameters:
+      shared_memory_type: mmap
+      dynamic_shared_memory_type: posix
+      shared_buffers: "64MB"
+  storage:
+    size: 1Gi
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: my-db-pooler
+spec:
+  cluster:
+    name: my-db
+  instances: 1
+  type: rw
+  pgbouncer:
+    poolMode: session
+    parameters:
+      max_client_conn: "100"
+      default_pool_size: "10"
+      server_login_retry: "0"
+```
+
+Connect via the pooler service (`my-db-pooler`) instead of the cluster services directly. The pooler pod will also be checkpointed by zeropod and restored on incoming connections.
+
 ## Verify
 
 ```bash
