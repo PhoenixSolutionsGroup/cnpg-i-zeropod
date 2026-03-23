@@ -8,7 +8,7 @@ Three components glue CNPG to zeropod:
 
 1. **Lifecycle Plugin** — Intercepts CNPG instance pod creation via CNPG-I gRPC hooks. Injects zeropod RuntimeClass, annotations, GODEBUG flags, and removes the liveness probe.
 2. **Pooler Webhook** — A MutatingAdmissionWebhook that intercepts Pooler (PgBouncer) pod creation. CNPG-I lifecycle hooks only cover instance pods; Pooler pods are created via a Deployment and bypass the plugin system. The webhook injects the same zeropod RuntimeClass and annotations so PgBouncer gets checkpointed too.
-3. **Reconciliation Controller** — Watches zeropod pod status labels. Disables the CNPG operator's reconciliation loop and suspends ScheduledBackups when a pod is checkpointed, re-enables them on restore.
+3. **Reconciliation Controller** — Watches zeropod pod status labels. Fences checkpointed instances (via `cnpg.io/fencedInstances`), suspends ScheduledBackups, and patches CNPG and Pooler services with `publishNotReadyAddresses: true` so checkpointed pods remain in endpoints for wake-on-connect.
 
 ## Quick Start
 
@@ -80,11 +80,14 @@ spec:
     parameters:
       max_client_conn: "100"
       default_pool_size: "10"
+      server_login_retry: "0"
 ```
 
-The webhook automatically injects zeropod into Pooler pods — no extra annotations needed. PgBouncer will checkpoint after the same inactivity period configured on the Cluster.
+> **Important:** `server_login_retry: "0"` is required. Without it, PgBouncer caches backend connection errors for 15s (the default), turning a sub-second cold start into a ~20s wait.
 
-Clients connect through the Pooler service (`my-db-pooler:5432`). When both PgBouncer and PostgreSQL are checkpointed, the first connection restores both concurrently — under 200ms on dedicated CPU, ~480ms on shared CPU.
+The webhook automatically injects zeropod into Pooler pods — no extra annotations needed. It strips the readiness probe (which would otherwise prevent PgBouncer from checkpointing) and adds a `wake-peers` annotation so restoring PgBouncer concurrently wakes PostgreSQL.
+
+Clients connect through the Pooler service (`my-db-pooler:5432`). When both PgBouncer and PostgreSQL are checkpointed, the first connection restores both concurrently.
 
 ### Configuration
 
@@ -110,12 +113,15 @@ The plugin reads from **cluster annotations** (not plugin parameters):
 ┌────────────────────▼────────────────────────────┐
 │        Reconciliation Controller                 │
 │                                                  │
-│  On SCALED_DOWN:                                 │
-│    → set cnpg.io/reconciliationLoop: disabled    │
+│  On instance SCALED_DOWN:                        │
+│    → add to cnpg.io/fencedInstances              │
 │    → suspend ScheduledBackups                    │
-│  On RUNNING:                                     │
-│    → remove cnpg.io/reconciliationLoop           │
+│    → patch -rw/-ro/-r svc publishNotReadyAddr    │
+│  On instance RUNNING:                            │
+│    → remove from cnpg.io/fencedInstances         │
 │    → resume ScheduledBackups                     │
+│  On pooler SCALED_DOWN:                          │
+│    → patch pooler svc publishNotReadyAddresses   │
 └─────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────┐
@@ -133,8 +139,8 @@ The plugin reads from **cluster annotations** (not plugin parameters):
 │                                                  │
 │  On Pooler (PgBouncer) pod creation:             │
 │    → inject runtimeClassName: zeropod            │
-│    → inject zeropod annotations                  │
-│    → remove liveness probe                       │
+│    → inject zeropod annotations + wake-peers     │
+│    → remove liveness + readiness probes          │
 │    (no GODEBUG — PgBouncer is C, not Go)         │
 └─────────────────────────────────────────────────┘
 ```

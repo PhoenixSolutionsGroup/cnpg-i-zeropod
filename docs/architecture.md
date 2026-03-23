@@ -20,14 +20,29 @@ A CNPG-I gRPC plugin that intercepts pod creation. When CNPG creates a pod for a
 
 CNPG's operator handles health monitoring independently via its reconciliation loop.
 
-### 2. Reconciliation Controller (`internal/controller/reconciler.go`)
+### 2. Pooler Webhook (`internal/webhook/webhook.go`)
 
-A controller-runtime reconciler that watches pods with both `cnpg.io/cluster` label and `zeropod.ctrox.dev/ports-map` annotation. When zeropod's manager DaemonSet updates the pod label `status.zeropod.ctrox.dev/postgres`:
+A MutatingAdmissionWebhook that intercepts Pooler (PgBouncer) pod creation. CNPG-I lifecycle hooks only cover instance pods; Pooler pods are created via a Deployment and bypass the plugin system. The webhook:
 
-- **SCALED_DOWN**: Sets `cnpg.io/reconciliationLoop: "disabled"` on the Cluster resource, suspends ScheduledBackups. Without this, the CNPG operator would try to reach the frozen instance manager, time out, and potentially fence/failover.
-- **RUNNING**: Removes the reconciliation annotation, resumes ScheduledBackups.
+1. Sets `spec.runtimeClassName: zeropod`
+2. Adds zeropod annotations (ports-map, container-names, scaledown-duration, cpu/memory requests)
+3. Adds `wake-peers` annotation with the `-rw` service ClusterIP so restoring PgBouncer concurrently wakes PostgreSQL
+4. Removes both liveness and readiness probes — the readiness probe (TCP on 5432 every 10s) resets zeropod's eBPF idle timer, preventing PgBouncer from ever checkpointing
 
-### 3. Zeropod Kustomize Overlay (`deploy/zeropod/kustomization.yaml`)
+### 3. Reconciliation Controller (`internal/controller/reconciler.go`)
+
+A controller-runtime reconciler that watches pods with both `cnpg.io/cluster` label and `zeropod.ctrox.dev/ports-map` annotation. When zeropod's manager DaemonSet updates the pod label `status.zeropod.ctrox.dev/<container>`:
+
+**Instance pods:**
+- **SCALED_DOWN**: Adds the pod to `cnpg.io/fencedInstances` on the Cluster (so CNPG skips it when waiting for pods to be ready), suspends ScheduledBackups, and patches the CNPG services (`-rw`, `-ro`, `-r`) with `publishNotReadyAddresses: true` so checkpointed pods remain in service endpoints for wake-on-connect.
+- **RUNNING**: Removes the pod from `cnpg.io/fencedInstances`, resumes ScheduledBackups.
+
+**Pooler pods:**
+- **SCALED_DOWN**: Patches the Pooler's service with `publishNotReadyAddresses: true`.
+
+Without `publishNotReadyAddresses`, checkpointed pods are removed from service endpoints (they're not Ready), so no TCP traffic can reach zeropod to trigger a restore — causing a permanent deadlock.
+
+### 4. Zeropod Kustomize Overlay (`deploy/zeropod/kustomization.yaml`)
 
 Extends the upstream zeropod k3s config with:
 - `tracker-ignore-localhost`: eBPF skips localhost connections (CNPG instance manager → PG)
@@ -72,13 +87,14 @@ cnpg-i-zeropod/
 │   ├── plugin/plugin.go                 # CNPG-I gRPC server setup
 │   └── controller/controller.go         # Controller-runtime manager setup
 ├── internal/
-│   ├── lifecycle/lifecycle.go           # Pod mutation (RuntimeClass, annotations, probe removal)
-│   └── controller/reconciler.go         # Reconciliation toggle + backup suspend/resume
+│   ├── lifecycle/lifecycle.go           # Instance pod mutation (RuntimeClass, annotations, probe removal)
+│   ├── webhook/webhook.go              # Pooler pod mutation (zeropod injection, probe removal, wake-peers)
+│   └── controller/reconciler.go         # Fencing, backup suspend/resume, publishNotReadyAddresses
 ├── charts/cnpg-i-zeropod/              # Helm chart
 │   └── templates/
 │       ├── deployment.yaml              # Plugin deployment
 │       ├── controller-deployment.yaml   # Controller deployment
-│       ├── controller-rbac.yaml         # ClusterRole for pods, clusters, scheduledbackups
+│       ├── controller-rbac.yaml         # ClusterRole for pods, services, clusters, scheduledbackups
 │       ├── service.yaml                 # Plugin gRPC service
 │       └── tls-secret.yaml              # mTLS certs for CNPG-I
 ├── deploy/zeropod/kustomization.yaml    # Zeropod k3s overlay
