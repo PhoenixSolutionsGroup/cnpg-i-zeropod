@@ -279,6 +279,8 @@ patches:
 
 This replaces the upstream `zeropod.ctrox.dev/node=true` selector with `vke.vultr.com/node-pool`, which VKE sets automatically on every node in the pool. When the cluster autoscaler adds a node to the pool, the DaemonSet deploys zeropod with no manual intervention.
 
+> **Recommended plan:** Use `vhf-2c-2gb` (2 vCPU / 2GB high-frequency) for VKS node pools. This is the smallest plan that reliably runs zeropod + CRIU checkpointing.
+
 To use a different pool, change `local-nvme-2-2` to your pool name:
 ```bash
 kubectl get nodes -L vke.vultr.com/node-pool
