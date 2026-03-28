@@ -97,6 +97,7 @@ The plugin reads from **cluster annotations** (not plugin parameters):
 | ------------------------------------------ | -------- | ------- | --------------------------------------- |
 | `cnpg.io/scale-to-zero-enabled`            | yes      | —       | Set to `"true"` to enable               |
 | `cnpg.io/scale-to-zero-inactivity-seconds` | no       | `300`   | Seconds of inactivity before checkpoint |
+| `cnpg.io/scale-to-zero-restore-timeout`    | no       | —       | Hold connection and retry restore on failure (e.g. `"10s"`) |
 
 ## Architecture
 

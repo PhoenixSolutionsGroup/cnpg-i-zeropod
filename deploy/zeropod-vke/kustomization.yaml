@@ -14,6 +14,7 @@ images:
     newTag: dev
 patches:
   # VKE containerd config is at /opt/containerd/config.toml (not /etc/containerd/)
+  # Also replace nodeSelector to auto-deploy on VKE node pool (no manual labeling)
   - target:
       kind: DaemonSet
       name: zeropod-node
@@ -25,7 +26,18 @@ patches:
       spec:
         template:
           spec:
+            nodeSelector:
+              vke.vultr.com/node-pool: "local-nvme-2-2"
             volumes:
               - name: containerd-etc
                 hostPath:
                   path: /opt/containerd/
+  # Remove the upstream zeropod.ctrox.dev/node label requirement
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/nodeSelector
+        value:
+          vke.vultr.com/node-pool: "local-nvme-2-2"

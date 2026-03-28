@@ -12,18 +12,25 @@ import (
 	"github.com/cloudnative-pg/cnpg-i/pkg/lifecycle"
 	"github.com/cloudnative-pg/machinery/pkg/log"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 const (
 	// Cluster annotations we read.
 	annotationScaleToZeroEnabled     = "cnpg.io/scale-to-zero-enabled"
 	annotationInactivitySeconds      = "cnpg.io/scale-to-zero-inactivity-seconds"
+	annotationRestoreTimeout         = "cnpg.io/scale-to-zero-restore-timeout"
 	defaultScaledownDuration         = "300s"
 
 	// Zeropod annotations we inject.
 	zeropodPortsMap          = "zeropod.ctrox.dev/ports-map"
 	zeropodContainerNames    = "zeropod.ctrox.dev/container-names"
 	zeropodScaledownDuration = "zeropod.ctrox.dev/scaledown-duration"
+	zeropodCPURequests       = "zeropod.ctrox.dev/cpu-requests"
+	zeropodMemoryRequests    = "zeropod.ctrox.dev/memory-requests"
+	zeropodRestoreTimeout    = "zeropod.ctrox.dev/restore-timeout"
+	zeropodProxyTimeout      = "zeropod.ctrox.dev/proxy-timeout"
+	zeropodConnectTimeout    = "zeropod.ctrox.dev/connect-timeout"
 
 	// The RuntimeClass to inject.
 	zeropodRuntimeClass = "zeropod"
@@ -116,6 +123,27 @@ func (impl Implementation) LifecycleHook(
 	mutatedPod.Annotations[zeropodPortsMap] = fmt.Sprintf("%s=5432", containerName)
 	mutatedPod.Annotations[zeropodContainerNames] = containerName
 	mutatedPod.Annotations[zeropodScaledownDuration] = scaledownDuration
+	mutatedPod.Annotations[zeropodCPURequests] = fmt.Sprintf(`{"%s":"0"}`, containerName)
+	mutatedPod.Annotations[zeropodMemoryRequests] = fmt.Sprintf(`{"%s":"0"}`, containerName)
+	if restoreTimeout, ok := cluster.Annotations[annotationRestoreTimeout]; ok {
+		mutatedPod.Annotations[zeropodRestoreTimeout] = restoreTimeout
+	}
+	// Set generous proxy/connect timeouts so the activator doesn't drop
+	// connections while CRIU restore is in progress under load.
+	mutatedPod.Annotations[zeropodProxyTimeout] = "30s"
+	mutatedPod.Annotations[zeropodConnectTimeout] = "30s"
+
+	// Zero out resource requests on all init containers so the scheduler
+	// doesn't count them against node capacity. Limits are preserved.
+	zero := resource.MustParse("0")
+	for i := range mutatedPod.Spec.InitContainers {
+		c := &mutatedPod.Spec.InitContainers[i]
+		if c.Resources.Requests == nil {
+			c.Resources.Requests = corev1.ResourceList{}
+		}
+		c.Resources.Requests[corev1.ResourceCPU] = zero
+		c.Resources.Requests[corev1.ResourceMemory] = zero
+	}
 
 	// Find the target container and apply CRIU compatibility patches.
 	targetIdx := -1
@@ -125,10 +153,18 @@ func (impl Implementation) LifecycleHook(
 		}
 		targetIdx = i
 
+		// Zero out resource requests on the target container so the
+		// scheduler doesn't count them against node capacity.
+		c := &mutatedPod.Spec.Containers[i]
+		if c.Resources.Requests == nil {
+			c.Resources.Requests = corev1.ResourceList{}
+		}
+		c.Resources.Requests[corev1.ResourceCPU] = zero
+		c.Resources.Requests[corev1.ResourceMemory] = zero
+
 		// GODEBUG flags only needed for the Go-based CNPG instance manager,
 		// not for PgBouncer (C process).
 		if containerName == "postgres" {
-			c := &mutatedPod.Spec.Containers[i]
 			c.Env = append(c.Env, corev1.EnvVar{
 				Name:  "GODEBUG",
 				Value: "multipathtcp=0,pidfd=0",

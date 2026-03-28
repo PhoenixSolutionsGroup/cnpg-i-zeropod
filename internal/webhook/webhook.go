@@ -23,6 +23,7 @@ import (
 const (
 	annotationScaleToZeroEnabled = "cnpg.io/scale-to-zero-enabled"
 	annotationInactivitySeconds  = "cnpg.io/scale-to-zero-inactivity-seconds"
+	annotationRestoreTimeout     = "cnpg.io/scale-to-zero-restore-timeout"
 	defaultScaledownDuration     = "300s"
 
 	zeropodPortsMap          = "zeropod.ctrox.dev/ports-map"
@@ -31,6 +32,9 @@ const (
 	zeropodCPURequests       = "zeropod.ctrox.dev/cpu-requests"
 	zeropodMemoryRequests    = "zeropod.ctrox.dev/memory-requests"
 	zeropodWakePeers         = "zeropod.ctrox.dev/wake-peers"
+	zeropodRestoreTimeout    = "zeropod.ctrox.dev/restore-timeout"
+	zeropodProxyTimeout      = "zeropod.ctrox.dev/proxy-timeout"
+	zeropodConnectTimeout    = "zeropod.ctrox.dev/connect-timeout"
 
 	zeropodRuntimeClass = "zeropod"
 )
@@ -156,6 +160,30 @@ func (h *Handler) Handle(ctx context.Context, req admission.Request) admission.R
 			"value": wakePeersValue,
 		})
 	}
+
+	// Inject restore-timeout if configured on the cluster.
+	if restoreTimeout, ok := cluster.Annotations[annotationRestoreTimeout]; ok {
+		patches = append(patches, map[string]interface{}{
+			"op":    "add",
+			"path":  "/metadata/annotations/" + escapeJSONPointer(zeropodRestoreTimeout),
+			"value": restoreTimeout,
+		})
+	}
+
+	// Set generous proxy/connect timeouts so the activator doesn't drop
+	// connections while CRIU restore is in progress under load.
+	patches = append(patches,
+		map[string]interface{}{
+			"op":    "add",
+			"path":  "/metadata/annotations/" + escapeJSONPointer(zeropodProxyTimeout),
+			"value": "30s",
+		},
+		map[string]interface{}{
+			"op":    "add",
+			"path":  "/metadata/annotations/" + escapeJSONPointer(zeropodConnectTimeout),
+			"value": "30s",
+		},
+	)
 
 	// Remove liveness and readiness probes on the pgbouncer container.
 	// The readiness probe (TCP on 5432 every 10s) resets zeropod's eBPF
