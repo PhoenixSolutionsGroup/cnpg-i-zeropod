@@ -397,8 +397,6 @@ spec:
         - mountPath: /sys/fs/bpf
           mountPropagation: Bidirectional
           name: bpf
-      nodeSelector:
-        zeropod.ctrox.dev/node: "true"
       serviceAccountName: zeropod-node
       tolerations:
       - operator: Exists
@@ -443,6 +441,3 @@ handler: zeropod
 kind: RuntimeClass
 metadata:
   name: zeropod
-scheduling:
-  nodeSelector:
-    zeropod.ctrox.dev/node: "true"
