@@ -27,7 +27,7 @@ patches:
         template:
           spec:
             nodeSelector:
-              vke.vultr.com/node-pool: "local-nvme-2-2"
+              zeropod.ctrox.dev/node: "true"
             volumes:
               - name: containerd-etc
                 hostPath:
@@ -40,4 +40,4 @@ patches:
       - op: replace
         path: /spec/template/spec/nodeSelector
         value:
-          vke.vultr.com/node-pool: "local-nvme-2-2"
+          zeropod.ctrox.dev/node: "true"

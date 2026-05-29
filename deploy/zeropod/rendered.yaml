@@ -398,7 +398,7 @@ spec:
           mountPropagation: Bidirectional
           name: bpf
       nodeSelector:
-        vke.vultr.com/node-pool: local-nvme-2-2
+        zeropod.ctrox.dev/node: "true"
       serviceAccountName: zeropod-node
       tolerations:
       - operator: Exists
