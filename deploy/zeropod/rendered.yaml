@@ -363,7 +363,6 @@ spec:
       initContainers:
       - args:
         - -criu-image=ghcr.io/ctrox/zeropod-criu:v4.2
-        - -tracker-ignore-localhost=true
         image: ghcr.io/phoenixsolutionsgroup/zeropod-installer:dev
         imagePullPolicy: IfNotPresent
         name: installer

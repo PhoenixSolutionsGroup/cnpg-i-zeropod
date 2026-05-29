@@ -3,7 +3,6 @@ kind: Kustomization
 resources:
   - https://github.com/ctrox/zeropod/config/production
 components:
-  - https://github.com/ctrox/zeropod/config/tracker-ignore-localhost
   - https://github.com/ctrox/zeropod/config/status-labels
 images:
   - name: ghcr.io/ctrox/zeropod-installer
