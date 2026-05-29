@@ -1,0 +1,448 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zeropod-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: migrations.runtime.zeropod.ctrox.dev
+spec:
+  group: runtime.zeropod.ctrox.dev
+  names:
+    kind: Migration
+    listKind: MigrationList
+    plural: migrations
+    singular: migration
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.containers[*].condition.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.liveMigration
+      name: Live
+      type: boolean
+    - jsonPath: .status.containers[*].migrationDuration
+      name: Duration
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: Migration tracks container live migrations done by zeropod.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              containers:
+                description: Containers to be migrated
+                items:
+                  properties:
+                    id:
+                      type: string
+                    imageServer:
+                      description: ImageServer to pull the CRIU checkpoint image from.
+                      properties:
+                        host:
+                          type: string
+                        port:
+                          type: integer
+                      required:
+                      - host
+                      - port
+                      type: object
+                    name:
+                      type: string
+                    pageServer:
+                      description: PageServer to pull the memory pages from during
+                        lazy migration.
+                      properties:
+                        host:
+                          type: string
+                        port:
+                          type: integer
+                      required:
+                      - host
+                      - port
+                      type: object
+                    ports:
+                      items:
+                        format: int32
+                        type: integer
+                      type: array
+                  required:
+                  - id
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              liveMigration:
+                description: |-
+                  LiveMigration indicates if this migration is done live (lazy) or not. If
+                  set, the source node will setup a page server to serve memory pages
+                  during live migration. If false, the image copy will include all memory
+                  pages, which might result in a slower migration.
+                type: boolean
+              podTemplateHash:
+                description: |-
+                  PodTemplateHash of the source pod. This is used to find a suitable target
+                  pod.
+                type: string
+              restoreReady:
+                description: |-
+                  RestoreReady indicates the shim is up and running and is ready to restore
+                  so checkpointing can be started on the other side.
+                type: boolean
+              sourceNode:
+                description: SourceNode of the pod to be migrated
+                type: string
+              sourcePod:
+                description: SourcePod of the migration
+                type: string
+              targetNode:
+                description: TargetNode of the pod to be migrated
+                type: string
+              targetPod:
+                description: TargetPod of the migration
+                type: string
+            required:
+            - containers
+            - podTemplateHash
+            - restoreReady
+            - sourceNode
+            type: object
+          status:
+            properties:
+              containers:
+                description: Containers indicates the status of the individual container
+                  migrations.
+                items:
+                  properties:
+                    condition:
+                      properties:
+                        phase:
+                          type: string
+                      type: object
+                    migrationDuration:
+                      type: string
+                    name:
+                      type: string
+                    pausedAt:
+                      format: date-time
+                      type: string
+                    restoredAt:
+                      format: date-time
+                      type: string
+                  required:
+                  - condition
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+            required:
+            - containers
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: zeropod-node
+  namespace: zeropod-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: zeropod:secret-creator
+  namespace: zeropod-system
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zeropod:event-creator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zeropod:migration-manager
+rules:
+- apiGroups:
+  - runtime.zeropod.ctrox.dev
+  resources:
+  - migrations
+  - migrations/status
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: zeropod:pod-updater
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - pods/resize
+  verbs:
+  - get
+  - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: zeropod:secret-creator
+  namespace: zeropod-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: zeropod:secret-creator
+subjects:
+- kind: ServiceAccount
+  name: zeropod-node
+  namespace: zeropod-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zeropod:event-creator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zeropod:event-creator
+subjects:
+- kind: ServiceAccount
+  name: zeropod-node
+  namespace: zeropod-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zeropod:migration-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zeropod:migration-manager
+subjects:
+- kind: ServiceAccount
+  name: zeropod-node
+  namespace: zeropod-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: zeropod:pod-updater
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: zeropod:pod-updater
+subjects:
+- kind: ServiceAccount
+  name: zeropod-node
+  namespace: zeropod-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  labels:
+    app.kubernetes.io/name: zeropod-node
+  name: zeropod-node
+  namespace: zeropod-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zeropod-node
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zeropod-node
+    spec:
+      containers:
+      - args:
+        - -metrics-addr=:8080
+        - -in-place-scaling=true
+        - -status-labels=true
+        - -status-events=true
+        - -status-labels=true
+        command:
+        - /zeropod-manager
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        image: ghcr.io/phoenixsolutionsgroup/zeropod-manager:dev
+        imagePullPolicy: IfNotPresent
+        name: manager
+        ports:
+        - containerPort: 8080
+          name: metrics
+        - containerPort: 8090
+          name: node-server
+        securityContext:
+          appArmorProfile:
+            type: Unconfined
+          capabilities:
+            add:
+            - SYS_PTRACE
+            - SYS_ADMIN
+            - NET_ADMIN
+            - SYS_RESOURCE
+        volumeMounts:
+        - mountPath: /run/zeropod
+          name: zeropod-run
+        - mountPath: /var/lib/zeropod
+          name: zeropod-var
+        - mountPath: /hostproc
+          name: hostproc
+        - mountPath: /sys/fs/bpf
+          name: bpf
+        - mountPath: /tls
+          name: tls
+      initContainers:
+      - args:
+        - -criu-image=ghcr.io/ctrox/zeropod-criu:v4.2
+        - -tracker-ignore-localhost=true
+        image: ghcr.io/phoenixsolutionsgroup/zeropod-installer:dev
+        imagePullPolicy: IfNotPresent
+        name: installer
+        volumeMounts:
+        - mountPath: /host
+          name: hostroot
+        - mountPath: /etc/containerd
+          name: containerd-etc
+        - mountPath: /run/containerd
+          name: containerd-run
+        - mountPath: /opt/zeropod
+          name: zeropod-opt
+        - mountPath: /run/systemd
+          name: systemd-run
+        - mountPath: /etc/criu
+          name: criu-etc
+        - mountPath: /tls
+          name: tls
+      - args:
+        - mount | grep "/sys/fs/bpf type bpf" || mount -t bpf bpf /sys/fs/bpf
+        command:
+        - /bin/sh
+        - -c
+        - --
+        image: alpine:3.19.1
+        imagePullPolicy: IfNotPresent
+        name: prepare-bpf-fs
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /sys/fs/bpf
+          mountPropagation: Bidirectional
+          name: bpf
+      nodeSelector:
+        vke.vultr.com/node-pool: local-nvme-2-2
+      serviceAccountName: zeropod-node
+      tolerations:
+      - operator: Exists
+      volumes:
+      - hostPath:
+          path: /opt/containerd/
+        name: containerd-etc
+      - hostPath:
+          path: /
+        name: hostroot
+      - hostPath:
+          path: /run/containerd
+        name: containerd-run
+      - hostPath:
+          path: /var/lib/zeropod
+        name: zeropod-var
+      - hostPath:
+          path: /opt/zeropod
+        name: zeropod-opt
+      - hostPath:
+          path: /run/zeropod
+        name: zeropod-run
+      - hostPath:
+          path: /run/systemd
+        name: systemd-run
+      - hostPath:
+          path: /etc/criu
+        name: criu-etc
+      - hostPath:
+          path: /proc
+          type: Directory
+        name: hostproc
+      - hostPath:
+          path: /sys/fs/bpf
+          type: Directory
+        name: bpf
+      - emptyDir: {}
+        name: tls
+---
+apiVersion: node.k8s.io/v1
+handler: zeropod
+kind: RuntimeClass
+metadata:
+  name: zeropod
+scheduling:
+  nodeSelector:
+    zeropod.ctrox.dev/node: "true"
