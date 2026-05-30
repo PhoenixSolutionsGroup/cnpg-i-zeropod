@@ -180,23 +180,27 @@ func (impl Implementation) LifecycleHook(
 		return nil, fmt.Errorf("creating patch: %w", err)
 	}
 
-	// Remove the liveness probe. CNPG adds probes AFTER calling the
-	// lifecycle hook, so the pod we receive has no probes. We append a
-	// RFC 6902 "remove" op targeting the final pod's liveness probe.
-	// Any probe type is incompatible with zeropod scale-to-zero:
-	//   - TCP on 5432: resets the eBPF idle timer, prevents scale-down
-	//   - HTTPS on 8000: fails while checkpointed, kills the pod
+	// Remove all probes. CNPG adds probes AFTER calling the lifecycle
+	// hook, so the pod we receive has no probes. We append RFC 6902
+	// "remove" ops targeting the final pod's probes.
+	// All probe types are incompatible with zeropod scale-to-zero:
+	//   - startupProbe (HTTPS:8000): TLS SNI mismatch on pod IP, pod never Ready
+	//   - readinessProbe (TCP:5432): resets eBPF idle timer, prevents scale-down
+	//   - livenessProbe (HTTPS:8000): fails while checkpointed, kills the pod
+	// CNPG operator monitors instance health directly via /pg/status.
 	if targetIdx >= 0 {
 		var ops []json.RawMessage
 		if err := json.Unmarshal(patch, &ops); err != nil {
 			return nil, fmt.Errorf("parsing patch ops: %w", err)
 		}
 
-		removeOp, _ := json.Marshal(map[string]interface{}{
-			"op":   "remove",
-			"path": fmt.Sprintf("/spec/containers/%d/livenessProbe", targetIdx),
-		})
-		ops = append(ops, removeOp)
+		for _, probe := range []string{"startupProbe", "readinessProbe", "livenessProbe"} {
+			removeOp, _ := json.Marshal(map[string]interface{}{
+				"op":   "remove",
+				"path": fmt.Sprintf("/spec/containers/%d/%s", targetIdx, probe),
+			})
+			ops = append(ops, removeOp)
+		}
 
 		patch, err = json.Marshal(ops)
 		if err != nil {
