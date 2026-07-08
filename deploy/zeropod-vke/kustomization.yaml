@@ -42,3 +42,11 @@ patches:
     patch: |-
       - op: remove
         path: /scheduling
+  # Fork :dev manager image serves only /metrics on :8080, not upstream's /probe
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
+        value: /metrics
