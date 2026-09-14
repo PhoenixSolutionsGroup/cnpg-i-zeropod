@@ -42,7 +42,7 @@ patches:
     patch: |-
       - op: remove
         path: /scheduling
-  # Fork :dev manager image serves only /metrics on :8080, not upstream's /probe
+# Fork :dev manager image serves only /metrics on :8080, not upstream's /probe
   - target:
       kind: DaemonSet
       name: zeropod-node
@@ -50,3 +50,21 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
         value: /metrics
+  # Force pull of the mutable :dev tag so new manager/installer builds roll out on sync
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: zeropod-node
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: installer
+                imagePullPolicy: Always
+            containers:
+              - name: manager
+                imagePullPolicy: Always
