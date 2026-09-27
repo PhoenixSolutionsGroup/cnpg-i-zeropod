@@ -46,6 +46,8 @@
 
 **Key insight**: CNPG does NOT auto-delete Running-but-not-Ready pods. It just waits. Fencing tells CNPG to stop waiting for a specific instance, which is exactly what we need for checkpointed pods.
 
+**Caveat (found once CRIU restore actually worked)**: fencing makes the instance manager stop PostgreSQL. On wake, the restored instance manager can see the fence before the controller removes it and shuts Postgres down mid-connection. Single-instance clusters (all zeropod tiers) now skip fencing. Open for multi-instance: find a way to lift the fence before the instance manager reconciles, or drop fencing.
+
 ---
 
 ## 3. CNPG Point-in-Time Recovery (PITR) & Branching

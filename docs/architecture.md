@@ -34,8 +34,10 @@ A MutatingAdmissionWebhook that intercepts Pooler (PgBouncer) pod creation. CNPG
 A controller-runtime reconciler that watches pods with both `cnpg.io/cluster` label and `zeropod.ctrox.dev/ports-map` annotation. When zeropod's manager DaemonSet updates the pod label `status.zeropod.ctrox.dev/<container>`:
 
 **Instance pods:**
-- **SCALED_DOWN**: Adds the pod to `cnpg.io/fencedInstances` on the Cluster (so CNPG skips it when waiting for pods to be ready), suspends ScheduledBackups, and patches the CNPG services (`-rw`, `-ro`, `-r`) with `publishNotReadyAddresses: true` so checkpointed pods remain in service endpoints for wake-on-connect.
-- **RUNNING**: Removes the pod from `cnpg.io/fencedInstances`, resumes ScheduledBackups.
+- **SCALED_DOWN**: For clusters with `instances > 1`, adds the pod to `cnpg.io/fencedInstances` on the Cluster (so CNPG skips it when waiting for pods to be ready). Single-instance clusters are never fenced (see "Fencing and CRIU restore" below). Always suspends ScheduledBackups and patches the CNPG services (`-rw`, `-ro`, `-r`) with `publishNotReadyAddresses: true` so checkpointed pods remain in service endpoints for wake-on-connect.
+- **RUNNING**: Removes the pod from `cnpg.io/fencedInstances` if present, resumes ScheduledBackups.
+
+**Fencing and CRIU restore:** in CNPG, fencing means the instance manager *stops PostgreSQL*. After a real CRIU restore, the restored instance manager can observe the fence before the controller lifts it on `RUNNING`, and fast-shuts-down Postgres (clients see `FATAL: the database system is shutting down`, then Postgres restarts). Fencing only buys anything when there is another instance to fail over to, so single-instance clusters skip it. Multi-instance clusters still have this race.
 
 **Pooler pods:**
 - **SCALED_DOWN**: Patches the Pooler's service with `publishNotReadyAddresses: true`.

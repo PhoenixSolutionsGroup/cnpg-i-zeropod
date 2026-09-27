@@ -116,25 +116,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 }
 
 // onScaledDown fences the checkpointed instance so CNPG's reconciler skips it
-// when waiting for pods to be ready. Also suspends backups when all instances
-// are fenced.
+// when waiting for pods to be ready. Also suspends backups.
 func (r *Reconciler) onScaledDown(ctx context.Context, logger log.Logger, pod *corev1.Pod, cluster *cnpgv1.Cluster) (ctrl.Result, error) {
-	fenced, err := getFencedInstances(cluster)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Already fenced — nothing to do.
-	if fenced.contains(pod.Name) {
-		return ctrl.Result{}, nil
-	}
-
-	logger.Info("fencing checkpointed instance",
-		"cluster", cluster.Name, "instance", pod.Name)
-
-	fenced.add(pod.Name)
-	if err := r.setFencedInstances(ctx, cluster, fenced); err != nil {
-		return ctrl.Result{}, err
+	if cluster.Spec.Instances > 1 {
+		if err := r.fence(ctx, logger, pod, cluster); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else {
+		logger.Info("skipping fence for single-instance cluster",
+			"cluster", cluster.Name, "instance", pod.Name)
 	}
 
 	if err := r.suspendScheduledBackups(ctx, logger, cluster); err != nil {
@@ -156,17 +146,14 @@ func (r *Reconciler) onRunning(ctx context.Context, logger log.Logger, pod *core
 		return ctrl.Result{}, err
 	}
 
-	// Not fenced — nothing to do.
-	if !fenced.contains(pod.Name) {
-		return ctrl.Result{}, nil
-	}
+	if fenced.contains(pod.Name) {
+		logger.Info("unfencing restored instance",
+			"cluster", cluster.Name, "instance", pod.Name)
 
-	logger.Info("unfencing restored instance",
-		"cluster", cluster.Name, "instance", pod.Name)
-
-	fenced.remove(pod.Name)
-	if err := r.setFencedInstances(ctx, cluster, fenced); err != nil {
-		return ctrl.Result{}, err
+		fenced.remove(pod.Name)
+		if err := r.setFencedInstances(ctx, cluster, fenced); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	if err := r.resumeScheduledBackups(ctx, logger, cluster); err != nil {
@@ -174,6 +161,22 @@ func (r *Reconciler) onRunning(ctx context.Context, logger log.Logger, pod *core
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *Reconciler) fence(ctx context.Context, logger log.Logger, pod *corev1.Pod, cluster *cnpgv1.Cluster) error {
+	fenced, err := getFencedInstances(cluster)
+	if err != nil {
+		return err
+	}
+	if fenced.contains(pod.Name) {
+		return nil
+	}
+
+	logger.Info("fencing checkpointed instance",
+		"cluster", cluster.Name, "instance", pod.Name)
+
+	fenced.add(pod.Name)
+	return r.setFencedInstances(ctx, cluster, fenced)
 }
 
 // fencedSet is an ordered set of instance names backed by a slice to produce
