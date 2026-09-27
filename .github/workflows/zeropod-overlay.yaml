@@ -1,0 +1,36 @@
+name: zeropod overlay
+
+on:
+  push:
+    paths: ["deploy/**", ".github/workflows/zeropod-overlay.yaml"]
+  pull_request:
+    paths: ["deploy/**", ".github/workflows/zeropod-overlay.yaml"]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        overlay: [deploy/zeropod-vke]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remote bases must be pinned to a full commit SHA
+        run: |
+          unpinned=$(grep -E '^\s*-\s*https?://' ${{ matrix.overlay }}/kustomization.yaml | grep -vE '\?ref=[0-9a-f]{40}$' || true)
+          if [ -n "$unpinned" ]; then
+            echo "::error::unpinned remote base: $unpinned"
+            exit 1
+          fi
+
+      - name: Render
+        run: kubectl kustomize ${{ matrix.overlay }} > rendered.yaml
+
+      - name: Zeropod images must come from the patched fork
+        run: |
+          grep -E '^\s*image:' rendered.yaml | grep zeropod | tee images.txt
+          test -s images.txt
+          if grep -v 'ghcr.io/phoenixsolutionsgroup/zeropod-' images.txt; then
+            echo "::error::zeropod image not from ghcr.io/phoenixsolutionsgroup (overlay images: rewrite no longer matches upstream names)"
+            exit 1
+          fi

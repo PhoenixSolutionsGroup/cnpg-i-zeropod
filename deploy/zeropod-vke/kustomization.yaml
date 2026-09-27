@@ -1,13 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - https://github.com/ctrox/zeropod/config/production
-components:
-  - https://github.com/ctrox/zeropod/config/status-labels
+  - https://github.com/PhoenixSolutionsGroup/zeropod/config/production?ref=fbf9671be5a4b8e8d548fd49106b944a81c7a5a3
 images:
   - name: ghcr.io/ctrox/zeropod-installer
     newName: ghcr.io/phoenixsolutionsgroup/zeropod-installer
-    newTag: dev
+    newTag: dev-fbf9671
   - name: ghcr.io/ctrox/zeropod-manager
     newName: ghcr.io/phoenixsolutionsgroup/zeropod-manager
     newTag: dev
