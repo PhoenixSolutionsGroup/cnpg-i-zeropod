@@ -32,6 +32,25 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
         value: /metrics
+  # /metrics dials every shim socket; at high project density it exceeds the
+  # 1s default probe timeout. Relax the probe so the manager isn't killed.
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: zeropod-node
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                livenessProbe:
+                  timeoutSeconds: 15
+                  periodSeconds: 30
+                  failureThreshold: 6
   # Force pull of the mutable :dev tag so new manager/installer builds roll out on sync
   - target:
       kind: DaemonSet
