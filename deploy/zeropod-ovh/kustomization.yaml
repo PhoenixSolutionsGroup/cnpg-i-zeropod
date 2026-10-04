@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/PhoenixSolutionsGroup/zeropod/config/k3s?ref=471d92a7923f1f62eed71c5ec847e2550e7ea1f4
+images:
+  - name: ghcr.io/ctrox/zeropod-installer
+    newName: ghcr.io/phoenixsolutionsgroup/zeropod-installer
+    newTag: dev-471d92a
+  - name: ghcr.io/ctrox/zeropod-manager
+    newName: ghcr.io/phoenixsolutionsgroup/zeropod-manager
+    newTag: dev
+patches:
+  # Remove nodeSelector so DaemonSet runs on all nodes
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/nodeSelector
+  # Remove RuntimeClass nodeSelector so zeropod pods can schedule on any node
+  - target:
+      kind: RuntimeClass
+      name: zeropod
+    patch: |-
+      - op: remove
+        path: /scheduling
+  # Fork :dev manager serves only /metrics on :8080, not upstream's /probe
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/livenessProbe/httpGet/path
+        value: /metrics
+  # Force pull of the mutable :dev tag so new manager/installer builds roll out on sync
+  - target:
+      kind: DaemonSet
+      name: zeropod-node
+    patch: |
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: zeropod-node
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: installer
+                imagePullPolicy: Always
+            containers:
+              - name: manager
+                imagePullPolicy: Always
