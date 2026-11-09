@@ -17,20 +17,22 @@ import (
 
 const (
 	// Cluster annotations we read.
-	annotationScaleToZeroEnabled     = "cnpg.io/scale-to-zero-enabled"
-	annotationInactivitySeconds      = "cnpg.io/scale-to-zero-inactivity-seconds"
-	annotationRestoreTimeout         = "cnpg.io/scale-to-zero-restore-timeout"
-	defaultScaledownDuration         = "300s"
+	annotationScaleToZeroEnabled    = "cnpg.io/scale-to-zero-enabled"
+	annotationInactivitySeconds     = "cnpg.io/scale-to-zero-inactivity-seconds"
+	annotationRestoreTimeout        = "cnpg.io/scale-to-zero-restore-timeout"
+	annotationRequiresNoConnections = "cnpg.io/scale-to-zero-requires-no-connections"
+	defaultScaledownDuration        = "300s"
 
 	// Zeropod annotations we inject.
-	zeropodPortsMap          = "zeropod.ctrox.dev/ports-map"
-	zeropodContainerNames    = "zeropod.ctrox.dev/container-names"
-	zeropodScaledownDuration = "zeropod.ctrox.dev/scaledown-duration"
-	zeropodCPURequests       = "zeropod.ctrox.dev/cpu-requests"
-	zeropodMemoryRequests    = "zeropod.ctrox.dev/memory-requests"
-	zeropodRestoreTimeout    = "zeropod.ctrox.dev/restore-timeout"
-	zeropodProxyTimeout      = "zeropod.ctrox.dev/proxy-timeout"
-	zeropodConnectTimeout    = "zeropod.ctrox.dev/connect-timeout"
+	zeropodPortsMap              = "zeropod.ctrox.dev/ports-map"
+	zeropodContainerNames        = "zeropod.ctrox.dev/container-names"
+	zeropodScaledownDuration     = "zeropod.ctrox.dev/scaledown-duration"
+	zeropodRequiresNoConnections = "zeropod.ctrox.dev/scaledown-requires-no-connections"
+	zeropodCPURequests           = "zeropod.ctrox.dev/cpu-requests"
+	zeropodMemoryRequests        = "zeropod.ctrox.dev/memory-requests"
+	zeropodRestoreTimeout        = "zeropod.ctrox.dev/restore-timeout"
+	zeropodProxyTimeout          = "zeropod.ctrox.dev/proxy-timeout"
+	zeropodConnectTimeout        = "zeropod.ctrox.dev/connect-timeout"
 
 	// The RuntimeClass to inject.
 	zeropodRuntimeClass = "zeropod"
@@ -123,6 +125,16 @@ func (impl Implementation) LifecycleHook(
 	mutatedPod.Annotations[zeropodPortsMap] = fmt.Sprintf("%s=5432", containerName)
 	mutatedPod.Annotations[zeropodContainerNames] = containerName
 	mutatedPod.Annotations[zeropodScaledownDuration] = scaledownDuration
+	if containerName == "postgres" {
+		requiresNoConnections := "true"
+		if value, ok := cluster.Annotations[annotationRequiresNoConnections]; ok {
+			if _, err := strconv.ParseBool(value); err != nil {
+				return nil, fmt.Errorf("parsing %s: %w", annotationRequiresNoConnections, err)
+			}
+			requiresNoConnections = value
+		}
+		mutatedPod.Annotations[zeropodRequiresNoConnections] = requiresNoConnections
+	}
 	mutatedPod.Annotations[zeropodCPURequests] = fmt.Sprintf(`{"%s":"0"}`, containerName)
 	mutatedPod.Annotations[zeropodMemoryRequests] = fmt.Sprintf(`{"%s":"0"}`, containerName)
 	if restoreTimeout, ok := cluster.Annotations[annotationRestoreTimeout]; ok {
